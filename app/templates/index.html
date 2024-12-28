@@ -1,0 +1,430 @@
+{% extends "base.html" %}
+
+{% block title %}首页 - NHC活性预测{% endblock %}
+
+{% block extra_head %}
+<!-- JSME 编辑器样式 -->
+<style>
+    #jsme_container {
+        width: 100%;
+        height: 500px;
+        position: relative;
+        background: #fff;
+        border: 1px solid #dee2e6;
+        border-radius: 4px;
+        padding: 10px;
+    }
+    
+    .jsme-loading {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        text-align: center;
+    }
+    
+    .jsme-error {
+        color: #dc3545;
+        padding: 1rem;
+        text-align: center;
+    }
+
+    .result-card {
+        background: #fff;
+        border-radius: 10px;
+        padding: 1.5rem;
+        margin-top: 1rem;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+
+    .activity-value {
+        font-size: 2rem;
+        font-weight: 700;
+        color: var(--secondary-color);
+        text-align: center;
+        margin: 1rem 0;
+    }
+
+    .activity-description {
+        text-align: center;
+        color: var(--text-color);
+        margin-bottom: 1rem;
+    }
+
+    .molecule-info {
+        background: var(--background-color);
+        padding: 1rem;
+        border-radius: 5px;
+        margin-top: 1rem;
+    }
+
+    .comparison-table {
+        margin-top: 1rem;
+    }
+
+    .comparison-table th {
+        background-color: var(--background-color);
+        font-weight: 500;
+    }
+
+    .comparison-table .activity-value {
+        font-size: 1.2rem;
+        margin: 0;
+    }
+
+    .empty-comparison {
+        text-align: center;
+        padding: 2rem;
+        color: var(--text-color);
+        opacity: 0.7;
+    }
+
+    .molecule-actions {
+        display: flex;
+        gap: 0.5rem;
+        margin-top: 1rem;
+    }
+
+    .btn-outline-danger {
+        padding: 0.25rem 0.5rem;
+        font-size: 0.875rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12 mb-4">
+        <h2 class="text-center">NHC活性预测</h2>
+        <p class="text-center">使用分子编辑器绘制分子结构，或输入SMILES字符串进行活性预测</p>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">分子编辑器</h5>
+            </div>
+            <div class="card-body">
+                <div id="jsme_container">
+                    <div class="jsme-loading">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">加载中...</span>
+                        </div>
+                        <p class="mt-2">正在加载分子编辑器...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">预测参数</h5>
+            </div>
+            <div class="card-body">
+                <form id="prediction-form">
+                    <div class="mb-3">
+                        <label for="smiles" class="form-label">SMILES字符串</label>
+                        <input type="text" class="form-control" id="smiles" name="smiles" required>
+                        <div class="form-text">分子结构的SMILES表示</div>
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100">预测活性</button>
+                </form>
+            </div>
+        </div>
+        
+        <div class="card mt-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">预测结果</h5>
+                <button type="button" class="btn btn-sm btn-outline-primary" id="add-to-comparison" disabled>
+                    <i class="fas fa-plus me-1"></i>添加到对比
+                </button>
+            </div>
+            <div class="card-body">
+                <div id="prediction-results">
+                    <!-- 预测结果将在这里显示 -->
+                </div>
+            </div>
+        </div>
+
+        <div class="card mt-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">分子对比</h5>
+                <button type="button" class="btn btn-sm btn-outline-danger" id="clear-comparison">
+                    <i class="fas fa-trash me-1"></i>清空对比
+                </button>
+            </div>
+            <div class="card-body">
+                <div id="comparison-results">
+                    <div class="empty-comparison">
+                        <i class="fas fa-vial fa-2x mb-2"></i>
+                        <p>暂无分子对比数据</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    let jsmeApplet = null;
+    let currentResult = null;  // 保存当前预测结果
+    let comparisonList = [];   // 保存对比列表
+    
+    // 检查JSME是否加载
+    function checkJSMELoaded() {
+        if (typeof JSApplet === 'undefined') {
+            document.getElementById('jsme_container').innerHTML = `
+                <div class="jsme-error">
+                    <p>加载分子编辑器失败</p>
+                    <p>请检查网络连接并刷新页面</p>
+                </div>
+            `;
+            return false;
+        }
+        return true;
+    }
+    
+    // 更新SMILES输入框
+    function updateSmilesInput(smiles) {
+        console.log('SMILES更新:', smiles);  // 调试信息
+        const smilesInput = document.getElementById('smiles');
+        if (smilesInput) {
+            smilesInput.value = smiles;
+        }
+    }
+    
+    // 显示预测结果
+    function displayPredictionResults(result) {
+        const resultsDiv = document.getElementById('prediction-results');
+        console.log('收到预测结果:', result);
+        
+        try {
+            if (!result) {
+                throw new Error('未收到预测结果');
+            }
+            
+            let bondOrder;
+            if (typeof result.bond_order === 'number') {
+                bondOrder = result.bond_order;
+            } else if (result.bond_orders && typeof result.bond_orders === 'object') {
+                bondOrder = Object.values(result.bond_orders)[0];
+            } else {
+                throw new Error('无法获取键级值');
+            }
+            
+            const activity = 4 - bondOrder;
+            
+            // 保存当前结果
+            currentResult = {
+                smiles: result.smiles || '',
+                bondOrder: bondOrder,
+                activity: activity
+            };
+            
+            resultsDiv.innerHTML = `
+                <div class="result-card">
+                    <div class="activity-value">${activity.toFixed(4)}</div>
+                    <div class="activity-description">预测活性值</div>
+                    <div class="molecule-info">
+                        <p class="mb-2"><strong>分子信息：</strong></p>
+                        <p class="mb-1">SMILES: ${result.smiles || ''}</p>
+                        <p class="mb-0">键级值: ${bondOrder.toFixed(4)}</p>
+                    </div>
+                </div>
+            `;
+
+            // 启用添加到对比按钮
+            document.getElementById('add-to-comparison').disabled = false;
+            
+        } catch (error) {
+            console.error('处理预测结果时出错:', error);
+            showError(`处理预测结果时出错: ${error.message}`);
+            currentResult = null;
+            document.getElementById('add-to-comparison').disabled = true;
+        }
+    }
+    
+    // 显示错误信息
+    function showError(message) {
+        console.error('错误:', message);  // 调试信息
+        const resultsDiv = document.getElementById('prediction-results');
+        resultsDiv.innerHTML = `
+            <div class="alert alert-danger" role="alert">
+                <i class="fas fa-exclamation-circle me-2"></i>${message}
+            </div>
+        `;
+    }
+    
+    // 初始化JSME
+    function jsmeOnLoad() {
+        if (!checkJSMELoaded()) return;
+        
+        try {
+            const container = document.getElementById('jsme_container');
+            const width = container.clientWidth - 20;
+            const height = container.clientHeight - 20;
+            
+            jsmeApplet = new JSApplet.JSME(container.id, width + 'px', height + 'px', {
+                "options": "newlook,autoez,nozoom",
+                "jme": "",
+                "guicolor": "#FFFFFF"
+            });
+            
+            // 设置回调函数
+            jsmeApplet.setCallBack('AfterStructureModified', function(event) {
+                const smiles = jsmeApplet.smiles();
+                console.log('结构修改事件:', event);
+                console.log('获取的SMILES:', smiles);
+                updateSmilesInput(smiles);
+            });
+            
+            // 清除加载提示
+            container.querySelector('.jsme-loading').style.display = 'none';
+            
+            // 添加其他事件监听
+            jsmeApplet.setCallBack('AfterStructureCleared', function() {
+                updateSmilesInput('');
+            });
+            
+            jsmeApplet.setCallBack('AfterPaste', function() {
+                const smiles = jsmeApplet.smiles();
+                updateSmilesInput(smiles);
+            });
+        } catch (error) {
+            console.error('JSME初始化失败:', error);
+            document.getElementById('jsme_container').innerHTML = `
+                <div class="jsme-error">
+                    <p>初始化分子编辑器失败</p>
+                    <p>错误信息: ${error.message}</p>
+                </div>
+            `;
+        }
+    }
+    
+    // 处理表单提交
+    document.getElementById('prediction-form').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        const smiles = document.getElementById('smiles').value;
+        
+        if (!smiles) {
+            showError('请输入SMILES字符串或使用分子编辑器绘制结构');
+            return;
+        }
+        
+        try {
+            const response = await fetch('/api/v1/predict/carbene-bond', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ 
+                    smiles: smiles,
+                    carbene_idx: 1  // 固定发送1
+                })
+            });
+            
+            if (!response.ok) {
+                throw new Error('预测请求失败');
+            }
+            
+            const result = await response.json();
+            displayPredictionResults(result);
+        } catch (error) {
+            showError(error.message);
+        }
+    });
+    
+    // 页面加载完成后检查JSME状态
+    window.addEventListener('load', function() {
+        setTimeout(function() {
+            if (!jsmeApplet) {
+                checkJSMELoaded();
+            }
+        }, 5000); // 5秒后检查
+    });
+
+    // 更新对比列表显示
+    function updateComparisonDisplay() {
+        const comparisonDiv = document.getElementById('comparison-results');
+        
+        if (comparisonList.length === 0) {
+            comparisonDiv.innerHTML = `
+                <div class="empty-comparison">
+                    <i class="fas fa-vial fa-2x mb-2"></i>
+                    <p>暂无分子对比数据</p>
+                </div>
+            `;
+            return;
+        }
+        
+        comparisonDiv.innerHTML = `
+            <div class="table-responsive comparison-table">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>序号</th>
+                            <th>SMILES</th>
+                            <th>活性值</th>
+                            <th>键级值</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${comparisonList.map((item, index) => `
+                            <tr>
+                                <td>${index + 1}</td>
+                                <td>${item.smiles}</td>
+                                <td class="activity-value">${item.activity.toFixed(4)}</td>
+                                <td>${item.bondOrder.toFixed(4)}</td>
+                                <td>
+                                    <button type="button" class="btn btn-sm btn-outline-danger" 
+                                            onclick="removeMolecule(${index})">
+                                        <i class="fas fa-times"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+        `;
+    }
+
+    // 添加到对比列表
+    function addToComparison() {
+        if (!currentResult) return;
+        
+        // 检查是否已存在
+        const exists = comparisonList.some(item => item.smiles === currentResult.smiles);
+        if (!exists) {
+            comparisonList.push({...currentResult});
+            updateComparisonDisplay();
+        }
+    }
+
+    // 从对比列表中移除
+    function removeMolecule(index) {
+        comparisonList.splice(index, 1);
+        updateComparisonDisplay();
+    }
+
+    // 清空对比列表
+    function clearComparison() {
+        comparisonList = [];
+        updateComparisonDisplay();
+    }
+
+    // 添加事件监听
+    document.addEventListener('DOMContentLoaded', function() {
+        document.getElementById('add-to-comparison').addEventListener('click', addToComparison);
+        document.getElementById('clear-comparison').addEventListener('click', clearComparison);
+    });
+</script>
+{% endblock %} 
